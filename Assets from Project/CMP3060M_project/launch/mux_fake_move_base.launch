@@ -1,0 +1,13 @@
+<launch>
+
+	<!-- launches in the same way as the Joy Node -->
+	<node pkg="move_base" type="move_base" respawn="false" name="move_base" clear_params="true" output="screen">
+		<rosparam file="$(find CMP3060M_project)/config/params/base_local_planner_params.yaml" command="load" />
+		<rosparam file="$(find CMP3060M_project)/config/params/global_costmap_params.yaml" command="load" />
+		<rosparam file="$(find CMP3060M_project)/config/params/local_costmap_params.yaml" command="load" />
+		<rosparam file="$(find CMP3060M_project)/config/params/costmap_common_params.yaml" command="load" ns="global_costmap" />
+		<rosparam file="$(find CMP3060M_project)/config/params/costmap_common_params.yaml" command="load" ns="local_costmap" />
+	<remap from="cmd_vel" to="move_base_cmd_vel" />
+	</node>
+	
+</launch>

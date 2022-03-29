@@ -1,0 +1,17 @@
+<launch>
+<!-- Again, this has been sourced from ROS by Example vol 2 -->
+
+  <!-- Designates which robot this will be applied to --> 
+  <arg name="robot_name" default="my_wheelchair"/>
+
+  <node pkg="nodelet" type="nodelet" name="$(arg robot_name)_nodelet_manager" args="manager"/>
+
+  <!-- It may prove wise to reference yocs here -->
+  <node pkg="nodelet" type="nodelet" name="cmd_vel_mux"
+		args="load yocs_cmd_vel_mux/CmdVelMuxNodelet $(arg robot_name)_nodelet_manager" clear_params="true" output="screen">
+
+	<!-- Need to consider how launch files can be compacted into one -->	
+	<param name="decision_crit" value="$(find cmp3060m_project)/src/multiplexer/params/decision_crit.yaml"/>
+	<remap from="cmd_vel_mux/output/cmd_vel" to="output/cmd_vel"/>
+  </node>
+</launch>

@@ -1,0 +1,16 @@
+<launch>
+
+  <node pkg="joy" type="joy_node" name="joystick" >
+  	<rosparam file="$(find CMP3060M_project)/config/xBox_joy_node.yaml" command="load" />
+  </node>
+
+  <!--- Teleop Joystick -->
+  <node name="teleop_node" pkg="CMP3060M_project" type="teleop_switch.py" output="screen" >
+  	<remap from="cmd_vel_mux/input/teleop" to="joystick_cmd_vel" />
+	<param name="linear_axis"      type="int"    value="1" />
+	<param name="linear_scale"     type="double" value="0.8" />
+	<param name="rotation_axis"    type="int"    value="0" />
+	<param name="rotation_scale"   type="double" value="1.5" />
+  </node>
+
+</launch>

@@ -1,0 +1,61 @@
+#! /usr/bin/env python
+
+import rospy
+import actionlib
+from smach import State,StateMachine
+import smach
+from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
+
+waypoints = [
+    ['one', (3.5, 4.7), (0.0, 0.0, -0.091, -0.995)],
+    ['two', (17.1, 13.3), (0.0, 0.0, -0.079, -0.996)],
+	['three', (24.0, 19.2), (0.0, 0.0, -0.097, -0.995)]
+]
+
+
+# Naming conventions need to be as logical as possible
+class auto_callback_env1(smach.State): 
+    def __init__(self, location, quarternion):
+        State.__init__(self, outcomes=['success'])
+
+        # 
+        self.client = actionlib.SimpleActionClient('move_base', MoveBaseAction)
+        self.client.wait_for_server()
+        
+        self.goal = MoveBaseGoal()
+		# have constant reference of the map itself
+        self.goal.target_pose.header.frame_id = 'map'
+		# take coordinates for goal state of robot
+        self.goal.target_pose.pose.position.x = location[0]
+        self.goal.target_pose.pose.position.y = location[1]
+        self.goal.target_pose.pose.position.z = 0.0
+		# "orientation" / qaurternion -- read further
+		# All of the below are unit qaurternions -- length is one.
+		# See unity answers for more...
+		# Check that the are Euler angles to quarternion
+        self.goal.target_pose.pose.orientation.x = quarternion[0]
+        self.goal.target_pose.pose.orientation.y = quarternion[1]
+        self.goal.target_pose.pose.orientation.z = quarternion[2]
+        self.goal.target_pose.pose.orientation.w = quarternion[3]
+
+	
+    def execute(self, userdata):
+        self.client.send_goal(self.goal)
+        self.client.wait_for_result()
+        return 'success'
+
+
+if __name__ == '__main__':
+
+	rospy.init_node('auto_env1')
+	# goal is measured to see if it is successful
+   	auto_control1 = StateMachine('success') 
+  	with auto_control1:
+		for i,w in enumerate(waypoints):
+			StateMachine.add(w[0],
+				auto_callback_env1(w[1], w[2]),
+				transitions={'success':waypoints[(i + 1) % \
+					len(waypoints)][0]})
+
+	auto_control1.execute()
+	rospy.spin()

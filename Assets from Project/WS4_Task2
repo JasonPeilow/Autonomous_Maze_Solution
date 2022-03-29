@@ -1,0 +1,107 @@
+#!/usr/bin/env python
+
+import actionlib
+import math # for LaserScan ranges
+import rospy
+
+from actionlib_msgs.msg import *
+from geometry_msgs.msg import Twist, Pose, Point, Quaternion
+from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
+from sensor_msgs.msg import Joy, LaserScan
+
+
+#wrap all of this in if statement?
+class SharedControl():
+	def __init__(self):
+		self.goal_sent = False
+		# 
+		rospy.on_shutdown(self.shutdown)
+		# Tell the action client that we want to spin a thread by default
+		self.action_server = actionlib.SimpleActionClient("move_base", MoveBaseAction)
+		self.sub = rospy.Subscriber("joy", Joy, self.teleop_control, queue_size=10)	
+		rospy.loginfo("Connecting to the ActionServer: boop beep...")
+		# Allow up to 60 seconds for the action server to come up
+		self.action_server.wait_for_server(rospy.Duration(60))
+
+
+	def autonomuos_control(self, location, orientation):
+        # Send a goal
+		self.goal_sent = True
+		goal = MoveBaseGoal()
+		goal.target_pose.header.frame_id = 'map'
+		goal.target_pose.header.stamp = rospy.Time.now()
+		goal.target_pose.pose = \
+		Pose(Point(location['x'], location['y'], location['z']),
+		Quaternion(orientation['qX'], orientation['qY'], orientation['qZ'], orientation['qW']))
+
+		# Start moving
+		self.action_server.send_goal(goal)
+		# Allow TurtleBot up to 60 seconds to complete task
+		success = self.action_server.wait_for_result(rospy.Duration(60)) 
+		state = self.action_server.get_state()
+		result = False
+
+		# check this
+		if success and state == GoalStatus.SUCCEEDED:
+			# Goal state has been achieved
+			result = True
+		else:
+			self.action_server.cancel_goal()
+		
+		self.goal_sent = False
+		return result
+
+	# called when joy message is received -- todo: Reduce speed!!!!
+	def teleop_control(data):
+		# Publish cmd_vel_mux/input/teleop to 
+		pub = rospy.Publisher("cmd_vel/input/teleop", Twist, queue_size=100)
+
+		# Send twist messages of user input to joy node
+		twist = Twist()
+		twist.linear.x = data.axes[1] # slight increase in forward acceleration (1.5)
+		twist.angular.z = data.axes[0]
+
+		# Prints values of user input to terminal, may not be neccesary
+		rospy.loginfo("twist.linear: %f ; angular %f", twist.linear.x, twist.angular.z)
+
+		# publish cmd_vel move command to Turtlesim
+		pub.publish(twist)
+
+
+	# -- Polymorphism? step 2?
+		# call both classes and put in if else
+		# if msg.ranges[639:0] <2 for e.g
+
+
+	def shutdown(self):
+        	if self.goal_sent:
+			self.action_server.cancel_goal()
+		rospy.loginfo("Sleep mode: beep-boop...")
+		rospy.sleep(1)
+
+
+if __name__ == '__main__':
+	try:
+		rospy.init_node('shared_control', anonymous=False)
+		# keep node alive until stopped
+		engage = SharedControl()
+
+        	# Customize the following values so they are appropriate for your location
+		set_location = {'x': 8.07, 'y' : 0.18, 'z' : 0.00}
+		set_orientation = {'qX' : 0.000, 'qY' : 0.000, 'qZ' : 0.022, 'qW' : 0.999}
+
+		rospy.loginfo("Travelling to goal at XY: (%s, %s, %s)", 
+		set_location['x'], set_location['y'], set_location['z'])
+		goal_info = engage.autonomuos_control(set_location, set_orientation)
+
+		if goal_info:
+			rospy.loginfo("Success in reaching goal")
+		else:
+			rospy.loginfo("Failed to reach goal")
+
+       	# Sleep to give the last log messages time to be sent	
+		rospy.sleep(1)
+
+	except rospy.ROSInterruptException:
+		rospy.loginfo("CTRL + C pressed")
+	rospy.spin()

@@ -1,0 +1,463 @@
+#!/usr/bin/env python
+
+# @author: Jason Peilow, PEI07088957
+# Extension Authorisation Code: 749a15c0
+
+"""
+
+------------------------------- REFERENCES ---------------------------------
+
+
+Quigley, M., Gerkey, B. and Smart, W.D.(2015) Programming Robots with ROS,
+Sebastapol, USA: O' Reilly.
+
+Fairchild, C. and Harman, T.L. (2017) ROS Robotics by Example, 2nd Edition.
+Birmingham, UK: Packt.
+
+ROS.org (2019) Quaternion basics. Mountain View: 
+Open Source Robotics Foundation, Inc. Available from
+http://wiki.ros.org/tf2/Tutorials/Quaternions [accessed 26 March 2019].
+
+Stack Overflow (2012) Choosing the correct upper and lower HSV boundaries
+for color detection with 'cv::inRange' (OpenCV). 
+New York City: Stack Exchange. Available from:
+https://stackoverflow.com/questions/10948589/choosing-the-correct- \
+upper-and-lower-hsv-boundaries-for-color-detection-withcv/48367205#48367205
+[accessed 26 March 2019].
+
+Smeenk.com (2014) Kinect V1 and Kinect V2 fields of view compared. Ede:
+Roland Smeenk. Available from https://smeenk.com/kinect-field-of-view-comparison/
+[accessed 26 March 2019].
+
+Risc-Docs (2018) ROS Basics. Thuwal: 
+King Abdullah University of Science and Technology (KAUST) 
+Available from https://risc.readthedocs.io/1-ros-basics.html 
+[accessed 26 March 2019].
+
+
+----------------------------------------------------------------------------
+
+"""
+
+import actionlib
+import cv2
+import numpy as np
+import rospy
+
+from cv_bridge import CvBridge, CvBridgeError
+from geometry_msgs.msg import Twist
+from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
+from sensor_msgs.msg import Image, LaserScan
+from smach import State,StateMachine
+from std_msgs.msg import String
+
+
+# -----------------------------------------------------------------------------------------------------------------------
+
+
+# All checkpoints were found using Rviz and the /clicked_point topic
+# (Fairchild et al., 2017, 188) 
+# The X and Y coordinates use a cartesian system ( X, -X, Y, -Y)
+# 0.0 would be the robots initial pose. 
+
+checkpoints = [
+	['N', ( 1.3, 5.0), (0.0, 0.0, 0.0, 1.0)],   # ( X, Y), with the robot going slightly east of 0.0
+	['NE',( 3.5, 4.5), (0.0, 0.0, 0.0, 1.0)],   # Neccessary to explore further
+	['E', ( 3.2, 0.3), (0.0, 0.0, 0.0, 1.0)],   # ( X, Y), with the robot barely going north of 0.0
+	['SE',( 2.2,-4.5), (0.0, 0.0, 0.0, 1.0)],   # Neccessary to explore further
+	['S', ( 0.7,-3.5), (0.0, 0.0, 0.0, 1.0)],   # ( X,-Y), with the robot barely going west of 0.0
+	['W', (-3.8, 0.3), (0.0, 0.0, 0.0, 1.0)],   # (-X, Y), with the robot barely going north of 0.0
+	['NW',(-3.9, 4.9), (0.0, 0.0, 0.0, 1.0)],   # Further Coverage of North West (Tables, 4m from W)
+]
+
+# (Quigley et al., 2015, 209-224)
+# (ROS.org, 2019)
+
+
+# -----------------------------------------------------------------------------------------------------------------------
+
+
+class Search:
+	def __init__(self):
+			
+		# Subscribes the the image_raw topic that allows for camera feed.
+		self.image_raw_sub = rospy.Subscriber("/camera/rgb/image_raw", Image, self.object_parameters)
+		# self.scan_sub = rospy.Subscriber('scan', LaserScan, self.scan_callback)
+		self.cmd_vel_navi = rospy.Publisher('/cmd_vel_mux/input/navi', Twist, queue_size = 1)
+
+		self.blue_post ,self.green_post, self.red_post, self.yellow_post = 0, 0, 0, 0
+
+		# Boundary of the HSV (Gue, Saturation and Value) pallet.
+		# (255, 255, 255) is the max value for HSV
+		self.hsv_limit = np.array([255, 255, 255])
+
+		# This is quite straight forward
+		# Two arrays have been set for every colour (B, G, R, Y)
+		# These consist of the upper and lower limits of that colour group.
+		# Meaning, the darkest and lightest shades of any of the four colours.
+		# OpenCV uses: H: 0-180, S: 0 - 255, V: 0 - 255, which differs from other methods.
+
+		self.blue_upper = np.array([120, 255, 225]) # dark blue
+		self.blue_lower = np.array([100, 230, 20]) # light blue
+
+		self.green_upper = np.array([60, 255, 255]) # dark green
+		self.green_lower = np.array([50, 210, 20]) # light green
+
+		self.red_upper = np.array([0, 255, 255]) # dark red
+		self.red_lower = np.array([0, 240, 20]) # light red
+
+		self.yellow_upper = np.array([30, 255, 255]) # dark yellow
+		self.yellow_lower = np.array([30, 200, 20]) # light yellow
+
+		# (Stack Overflow, 2012)
+
+		"""
+		# Kinect (Xbox 360 release) has depth resolution of 640*480 pixels
+		# The FOV is 62 * 48.6 degrees. Resulting in 10*10 pixels per degree.
+		# This equates to a range (pixel total) of 307200.
+		# Logically, if I make it more than that, it should limit the view?
+		# Does limit the view ever so slightly, adding 10,00 and rounding (Slight brute force)
+		
+		self.limit_FOV = 320000
+
+		# (Smeenk.com, 2014)
+
+		"""
+
+		# Allows for geometry msgs to be sent and publishes velocity commands
+		self.twist = Twist();
+
+		# Allows for the bridging of OpenCV functionality into ROS
+		self.bridge = CvBridge()
+
+		# Initiates high level GUI
+		cv2.startWindowThread()
+
+
+# -----------------------------------------------------------------------------------------------------------------------
+
+	"""
+
+	Too confusing for the Turtlebot
+
+	def scan_callback(self, msg):
+
+		if msg.ranges[0] < 0.3:
+			self.twist.linear.x = 0.0
+			self.twist.angular.z = 0.7
+
+		if msg.ranges[639] < 0.3:
+			self.twist.linear.x = 0.0
+			self.twist.angular.z = -0.7
+
+		# calls back to publisher /cmd_vel_mux/input/navi topic
+		self.cmd_vel_navi.publish(self.twist)
+
+		# (Quigley et al., 2015, 103-105)
+		# (Risc-Docs, 2018) 
+
+	"""
+
+
+# -----------------------------------------------------------------------------------------------------------------------
+
+
+	def object_parameters(self, ros_image):
+
+		# Try to convert ROS image messages to OpenCV Matrix format
+		# ROS Image is 8-bit RGB/BGR format
+		# If unsuccessful, return error.
+		try:
+			testing_image = self.bridge.imgmsg_to_cv2(ros_image, "bgr8")
+		except CvBridgeError, e:
+			print e
+
+		# Specify the dimensions of the image then apply.
+		height, width, depth = testing_image.shape
+						
+		# Convert HSV to RGB format
+		training_image = cv2.cvtColor(testing_image, cv2.COLOR_BGR2HSV)
+
+		# Overally colour boundary represents the limits of the HSV boundary/threshold.
+		# This being (255, 255, 255). Repeated twice to maintain format
+		# This is with regard to the upper and lower boundries.
+		colour_boundary = cv2.inRange(training_image, self.hsv_limit, self.hsv_limit)
+
+
+		# ------------- General Target Block Descriptions -------------------
+
+		"""
+		1. if not self.X_post
+		   X_confirmed = cv2.inRange(training_image, self.X_lower, self.X_upper)
+		   
+		   EXPLAINED: This coniditional statement is always open to pass the...
+		   condition. The posts are constantly being searched for, even if it...
+		   it one by one. Considering the condition is always open, it is only...
+		   satisfied when anything in the training image holds pixels of...
+		   X_upper and X_lower, which specifies the colour range. 
+		
+		3. X_moments = cv2.moments(X_confirmed)
+		   
+		   EXPLAINED: OpenCV moments are the designated to this specfic colour...
+		   This is only after the previous condition has been met.
+
+		4. if X_moments['m00'] > 0:
+		   
+		   EXPLAINED: Essentially, the same as the spatial moments in object...
+		   detection. Relates to centroid arithmetic and if the pixels exist...
+		   in that range then pass the condition.
+
+
+		5. self.X_post = self.object_detection(testing_image, X_confirmed)
+		   
+		   EXPLAINED: The X_post has now been given parameters. It can be...
+		   thought of as 'X_post had originally been 0, just false, but now...
+		   it has the scale of colour and image dimensions applied to it.
+		   This has now become the testing_image and is passed to the...
+		   object_detection function.
+
+
+		Please apply this explanation to the four blocks below.
+		One issue, it will only find the posts in that order.
+
+		"""
+
+		# -------------------------------------------------------------------
+
+
+		# --------------------- Blue Target Block --------------------------
+
+		# Assess target
+		if not self.blue_post: 
+			blue_confirmed = cv2.inRange(training_image, self.blue_lower, self.blue_upper)
+
+			# Confirm target
+			blue_moments = cv2.moments(blue_confirmed)
+
+			if blue_moments['m00'] > 0:
+				self.blue_post = self.object_detection(testing_image, blue_confirmed)
+
+		# (Quigley et al., 2015, 200-208)
+
+		# -------------------------------------------------------------------
+
+
+		# --------------------- Green Target Block -------------------------
+
+		# Assess target
+		elif not self.green_post:
+			green_confirmed = cv2.inRange(training_image, self.green_lower, self.green_upper)
+			
+			# Confirm target
+			green_moments = cv2.moments(green_confirmed)
+
+			if green_moments['m00'] > 0:
+				self.green_post = self.object_detection(testing_image, green_confirmed)
+
+		# (Quigley et al., 2015, 200-208)
+
+		# -------------------------------------------------------------------
+
+
+		# ---------------------- Red Target Block ---------------------------
+
+		# Assess target
+		elif not self.red_post: 
+			red_confirmed = cv2.inRange(training_image, self.red_lower, self.red_upper)
+			
+			# Confirm target
+			red_moments = cv2.moments(red_confirmed)
+
+			if red_moments['m00'] > 0: 
+				self.red_post = self.object_detection(testing_image, red_confirmed)
+
+		# (Quigley et al., 2015, 200-208)
+
+		# -------------------------------------------------------------------
+
+
+		# --------------------- Yellow Target Block -------------------------
+
+		# Assess target
+		elif not self.yellow_post: 
+			yellow_confirmed = cv2.inRange(training_image, self.yellow_lower, self.yellow_upper)
+			
+			# Confirm target
+			yellow_moments = cv2.moments(yellow_confirmed)
+
+			if yellow_moments['m00'] > 0:
+				self.yellow_post = self.object_detection(testing_image, yellow_confirmed)
+
+		# (Quigley et al., 2015, 200-208)
+
+		# -------------------------------------------------------------------
+
+		cv2.namedWindow("Robot_View", cv2.WINDOW_NORMAL)
+		cv2.imshow("Robot_View", testing_image)
+		cv2.waitKey(3)
+
+
+# -----------------------------------------------------------------------------------------------------------------------
+
+				
+	def object_detection(self, testing_image, colour_boundary):
+
+		# dimensions / shape of the camera
+		height, width, depth = testing_image.shape
+		target_locked = colour_boundary
+
+		# Combination of paramters to limit the area of the screen detecting colour
+		adjust = 3
+
+		# Python slice notatio helps to express pixel regions in compact syntax
+		search_high = adjust * height / 4
+
+		# This is 20, because it relates to the 20-row portion of the image
+		# This is equates to a 1 metre distance in front of the turtlebot. 
+		search_low = adjust * height / 4 + 20
+
+		# Using list sclicing between the lower search boundary and height dimension...
+		# ...it is possible to limit what is detected that applies to colour_boundary/target_locked.
+		# Any pixels outside of that range will be reduced to zero.7
+		# Any of the false/boolean values can be processed. Meaning any target.
+		if target_locked[search_low : height, 0 : width].any():
+			rospy.loginfo("'found':'success'-->'next'")
+			return 1
+
+		# Ordinarily, this section would pertain to the layer mask of a given colour.
+		# In this instance, colour boundary, concerns every colour (B, G, R, Y)
+		
+		# Numpy libraries and OpenCV are used to erase any pixels outside the desired colour range
+		# This is also called, 'zero-ing out', hende the zeros. 
+		colour_boundary[0 : search_high, 0 : width] = 0
+		colour_boundary[search_low : height, 0 : width] = 0
+
+		# Once the blob has been created, OpenCV moments will be utilized. 
+		spatial_moments = cv2.moments(colour_boundary)
+
+		# If anything is detected (more than zero) -- begin arithmetic to calculate centroid.
+		if spatial_moments['m00'] > 0:
+
+			# mean.x = m10 / m00, mean.y = m01, m00 (mean or mu)
+			# (mean.x, mean.y) is the mass center of the spatial moments
+
+			# cx and cy are centre coordinates (Centroid) of the drawing circle
+			# combined with the spatial moments, this targets the object
+			centre_x_coord = int(spatial_moments['m10'] / spatial_moments['m00'])
+			centre_y_coord = int(spatial_moments['m01'] / spatial_moments['m00'])
+
+			# The circle is actually an altered version of the rectangle shape
+			# rectangle drawing = (img, (384,0),(510,128),(0,255,0), 3)
+			# I am going to make my circle black, just to be different. 
+			cv2.circle(testing_image, (centre_x_coord, centre_y_coord), 20, (0, 0, 0), -1)
+
+			# calculates the "error signal"
+			# meaning the centre column of the image is taken
+			# this estimates the centre of the line. 
+			estimated_centre = centre_x_coord - width / 2
+
+			# 0.4 metres per second is a reasonable speed. 
+			self.twist.linear.x = 0.4
+			# I understand it breaks the estimation down into something achieveable for the Turtlebot.  
+			# But, otherwise, limited understanding of this line. 
+			self.twist.angular.z = -float(estimated_centre) / 100
+
+			# calls back to publisher /cmd_vel_mux/input/navi topic
+			self.cmd_vel_navi.publish(self.twist)
+			
+		return 0
+
+		# (Quigley et al., 2015, 200-208)
+
+
+# -----------------------------------------------------------------------------------------------------------------------
+
+
+# This is the Navigation class, defined as a "State" object
+# It is such, due to the fact that a number of goal states are available and must be iterated through.
+class Navigation(State):
+	def __init__(self, point, quaternion):
+		State.__init__(self, outcomes=['success'])
+
+		# The action library client is contacted
+		# The action client specifies the msg types the action server receives. 
+		# In this case, move_base messages are beign sent
+		# MoveBaseAction sends move_base messages to the coordinate frame.
+		self.client = actionlib.SimpleActionClient('move_base', MoveBaseAction)
+		# Wait for the server...
+		self.client.wait_for_server()
+
+		# Sends a pose, via msg, with a reference to the coordinate frame
+		self.CP = MoveBaseGoal()
+		# frame ID is always the costmap
+		self.CP.target_pose.header.frame_id = 'map'
+
+		# This represents the pose of the robot in the world
+		# A combination of X and Y coordinates are used
+		# The Z axis is irrlevant as it is for robots that can use a Z-axis
+		# Anything in 3D space (E.g. PR2 head movement or a drone etc.)
+		self.CP.target_pose.pose.position.x = point[0]
+		self.CP.target_pose.pose.position.y = point[1]
+		self.CP.target_pose.pose.position.z = 0.0   # Only used in 3D space.
+
+		# These quaternions are to be used for 2D navigation
+		# ROS uses quaternions to apply roll, pitch and yaw (RPY angles)
+		# The exta 'w', represents the eigen number (scalar coordinates)
+		# In this instance the unit quaternion used is (0, 0, 0, 1) as it yields no rotation
+		self.CP.target_pose.pose.orientation.x = quaternion[0] # 0
+		self.CP.target_pose.pose.orientation.y = quaternion[1] # 0
+		self.CP.target_pose.pose.orientation.z = quaternion[2] # 0
+		self.CP.target_pose.pose.orientation.w = quaternion[3] # 1
+
+	# The execute checpoint function
+	# determines if the goal has actually been achieved or not
+	# if the goal is reached 'success' is returned
+	def execute(self, userdata):
+			self.client.send_goal(self.CP)
+			self.client.wait_for_result()
+			return 'success'
+
+	# Behaviour of the turtlebot on exit
+	def exit():
+		rospy.loginfo("Shutting down...")
+
+	# (Quigley et al., 2015, 209-224)
+	# (ROS.org, 2019)
+
+
+# -----------------------------------------------------------------------------------------------------------------------
+
+
+if __name__ == '__main__':
+
+	# Initialising the ROS node in general. 
+	# This has been named after the assessment itself as it seemed appropriate.
+	rospy.init_node("visual_object_search", anonymous = True)
+
+	# an instance of the "Search" class has been created, so it may be called back from the main.
+	visual_search = Search()
+
+	# Create an instance of the state machine outcomes
+	navigate = StateMachine('success')
+	
+	# This chains all of the individual states together
+	# Meaning, each goal in checkpoints will eventually be passed
+	with navigate:
+		for i,c in enumerate(checkpoints):
+			# The checkpoints, when organised correctly, will transition one by one.
+			# Once completed, it will transition back to the first one. 
+			StateMachine.add(c[0], Navigation(c[1], c[2]),
+			transitions = {'success' : checkpoints[(i + 1) % len(checkpoints)][0]})
+
+	# (Quigley et al., 2015, 209-224)
+
+	# For every time that .execute is called, the goal is sent to the navigation stack. 
+	navigate.execute()
+
+	# calls back to behaviour on exit
+	rospy.on_shutdown(exit) 
+
+	# This allows the node to repeat until stopped
+	rospy.spin()
+
+	cv2.destroyAllWindows() # close all windows when complete

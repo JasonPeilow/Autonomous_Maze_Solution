@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<launch>
+
+	<!-- We resume the logic in empty_world.launch -->
+	<include file="$(find gazebo_ros)/launch/empty_world.launch">
+		<arg name="world_name" value="$(find cmp3060m_project)/src/worlds/dynamic_study.world" />
+	</include>
+
+	<param name="robot_description" textfile="$(find cmp3060m_project)/src/models/my_wheelchair.urdf" />
+
+	<node name="spawn_my_wheelchair" pkg="gazebo_ros" type="spawn_model" output="screen"
+		args="-urdf -param robot_description -model my_wheelchair -x -8 -y 1" /> 
+
+	<!--
+	<include file="$(find amcl)/examples/amcl_diff.launch" />
+
+	<node name="map_server" pkg="map_server" type="map_server"
+		args="$(find cmp3060m_project)/src/worlds/testing/test_map.yaml" />
+
+	REMEMBER, IT IS PROBABLY WISE TO CREATE AN INDIVIDUAL SCRIPT FOR SLAM AND RVIZ LAUNCHING.
+	THERE COULD ACTUALL BE AN EXAMPLE IN THE ROBOTICS PACKAGE MARC PUT ONLINE
+	-->
+	<node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher" />
+
+
+</launch>

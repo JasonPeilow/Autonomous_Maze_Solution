@@ -1,0 +1,18 @@
+subscribers:
+
+  - name:        "Default input"
+    topic:       "input/default"
+    timeout:     0.1
+    priority:    0
+  
+  - name:        "Joystick control"
+    topic:       "joystick_cmd_vel"
+    timeout:     1.0
+    priority:    20
+    
+  - name:        "Navigation stack"
+    topic:       "move_base_cmd_vel"
+    timeout:     1.0
+    priority:    10
+    
+publisher:       "output/cmd_vel"

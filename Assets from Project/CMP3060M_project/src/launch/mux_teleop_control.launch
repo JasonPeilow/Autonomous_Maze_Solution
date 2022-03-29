@@ -1,0 +1,22 @@
+<launch>
+<!-- REFERENCE HERE: Ros by Example Volume 2 -->
+
+  <!--- Teleop Joystick -->
+  <node pkg="cmp3060m_project" type="teleop_xbox.py" name="teleop_joy" output="screen">
+  	<!-- This sets the velocity input for joy_control when using mux (multiplexer) -->
+	<param name="scale_angular" value="1.5"/>
+	<param name="scale_linear" value="0.3"/>
+	<param name="axis_deadman" value="7"/> <!-- Cannot remember what deadman does. Centre of stick? -->
+	<!-- 
+	remaps 'cmd_vel' to joystick_cmd_vel 
+	This will be sent to the mux.yaml (what ever the name is. Find later)
+	-->
+	<remap from="cmd_vel_mux/input/teleop" to="joystick_cmd_vel" />
+  </node>
+
+  <!-- launches the joy node and scripts supporting joy commands-->
+  <node pkg="joy" type="joy_node" name="joystick" output="screen" />
+	<rosparam file="$(find cmp3060m_project)/src/teleop/params/xBox_joy_node.yaml" command="load" />
+  </node>
+
+</launch>

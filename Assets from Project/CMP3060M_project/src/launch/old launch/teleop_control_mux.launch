@@ -1,0 +1,12 @@
+<launch>
+
+  <!--- Teleop Joystick -->
+  <node name="teleop_node" pkg="experiment" type="teleop_control.py" output="screen" >
+    
+	<param name="linear_axis"      type="int"    value="1" />
+	<param name="linear_scale"     type="double" value="0.8" />
+	<param name="rotation_axis"    type="int"    value="0" />
+	<param name="rotation_scale"   type="double" value="1.5" />
+  </node>
+
+</launch>
